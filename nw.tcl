@@ -6,14 +6,34 @@ package require sqlite3
 #load /usr/local/lib/sqlite3/libtclsqlite3.so sqlite
 package require ncgi
 
-sqlite3 db "wiki.db"
+sqlite3 db "/home/protected/nw/wiki.db"
 
 proc setup {} {
 	db eval {create table articles (title text, author text, content text, edited integer)}
 }
 
+proc header {title {extra ""} {linkit 0}} {
+	set head "<!DOCTYPE html><html><head><title>$extra [niceify $title]</title></head><body>"
+	if {$linkit} {
+		append head "<h1>$extra <a href='$title'>[niceify $title]</a></h1>"
+	} else {
+		append head "<h1>$extra [niceify $title]</h1>"
+	}
+	return $head
+}
+
+proc footer {title {author ""} {edited ""} {links 0}} {
+	if {$links} {
+		set s "<hr /><p><em>"
+		if {$edited ne ""} {append s "Last edited at [clock format $edited] "}
+		if {$author ne ""} {append s "by <a href=\"$author\">$author</a> "}
+		append s "\[<a href='$title?mode=edit'>Edit</a> - <a href='$title?mode=old'>History</a>\]</em></p></body></html>"
+	} else {
+		return "</body></html>"
+	}
+}
+
 proc addentry {title author text} {
-	set title [uglify $title]
 	set time [clock seconds]
 	db eval {INSERT INTO articles VALUES($title,$author,$text,$time)}
 }
@@ -24,33 +44,25 @@ proc versionlist {title} {
 		return 0
 	}
 	
-	set document "<!DOCTYPE html>
-<html>
-<head><title>History of $title</title></head>
-<body>
-<h1>History of <a href='$title'>$title</a></h1><ul>"
+	set document "[header $title {History of} 1]<ul>"
 	
 	foreach {t author text edited} $data {
 		append document "<li><a href='$title?mode=old&time=$edited'>[clock format $edited]</a> by <a href='$author'>$author</a></li>"
 	}
 	
-	append document "</ul></body></html>"
+	append document "</ul>[footer $title]"
 	return $document
 }
 
 proc toc {} {
 	set data [lsort -dictionary -unique [db eval {select title from articles}]]
-	set document "<!DOCTYPE html>
-<html>
-<head><title>Table of Contents</title></head>
-<body>
-<h1>Table of Contents</h1><ul>"
+	set document "[header Table_of_Contents]<ul>"
 
 	foreach title $data {
 		append document "<li><a href='$title'>$title</a></li>"
 	}
 	
-	append document "</ul></body></html>"
+	append document "</ul>[footer Table_of_Contents]"
 	return $document
 }
 
@@ -83,11 +95,7 @@ proc editpage {title} {
 		set data ""
 	}
 	
-	set document "<!DOCTYPE html>
-<html>
-<head><title>Editing $title</title></head>
-<body>
-<h1>Editing $title</h1>
+	set document "[header $title Editing]
 <form action=\"$title\" method=\"POST\">
 <textarea rows='50' cols='80' name='content'>$data</textarea>
 <br /><br />
@@ -95,8 +103,7 @@ Username: <input type='text' name='author' />
 <input type='hidden' name='mode' value='save' />
 <input type='submit' value='Save' />
 </form>
-</body>
-</html>"
+[footer $title]"
 }
 
 proc renderentry {e} {
@@ -110,10 +117,7 @@ proc renderentry {e} {
 	
 	foreach line $rawtext {
 		if {[regexp {^ {4,}.*$} $line]} {
-			if {$next ne "</pre>"} {
-				lappend out $next
-				lappend out "<pre>"
-			}
+			if {$next ne "</pre>"} { lappend out "$next<pre>" }
 			lappend out $line
 			set next "</pre>"
 			continue
@@ -131,27 +135,18 @@ proc renderentry {e} {
 			set line "<h$ln>$text</h$ln>"
 			set next ""
 		} elseif {[regexp {^# (.*)$} $line match text]} {
-			if {$next ne "</ol>"} {
-				lappend out $next
-				lappend out "<ol>"
-			}
+			if {$next ne "</ol>"} { lappend out "$next<ol>" }
 			set line "<li>$text</li>"
 			set next "</ol>"
 		} elseif {[regexp {^\* (.*)$} $line match text]} {
-			if {$next ne "</ul>"} {
-				lappend out $next
-				lappend out "<ul>"
-			}
+			if {$next ne "</ul>"} { lappend out "$next<ul>" }
 			set line "<li>$text</li>"
 			set next "</ul>"
 		} elseif {[regexp {^[[:space:]]*$} $line match]} {
 			lappend out $next
 			set next ""
 		} else {
-			if {$next ne "</p>"} {
-				lappend out $next
-				lappend out "<p>"
-			}
+			if {$next ne "</p>"} { lappend out "$next<p>" }
 			set next "</p>"
 		}
 		set links [lreverse [regexp -all -inline -indices -- {\[\[(?!\[)(.*?)(?: (.*?))?\]\]} $line]]
@@ -159,7 +154,7 @@ proc renderentry {e} {
 			set link ""
 			set texturl [string range $line [lindex $url 0] [lindex $url 1]]
 			if {[lindex $text 0] == -1} {
-				set link "<a href='$texturl'>$texturl</a>"
+				set link "<a href='$texturl'>[niceify $texturl]</a>"
 			} else {
 				set texttext [string range $line [lindex $text 0] [lindex $text 1]]
 				set link "<a href='$texturl'>$texttext</a>"
@@ -175,52 +170,16 @@ proc renderentry {e} {
 		lappend out $line
 	}
 	lappend out $next
-	
 	set fulltext [join $out ""]
-	
-	set document "<!DOCTYPE html>
-	<html>
-	<head><title>[niceify $title]</title></head>
-	<body>
-	<h1>[niceify $title]</h1>
-	<p></p>
-	$fulltext
-	<hr />
-	<p><em>Last edited by <a href=\"$author\">$author</a> at [clock format $edited] - <a href='$title?mode=edit'>Edit</a> - <a href='$title?mode=old'>History</a></em></p>
-	</body>
-	</html>"
-	
+	set document "[header $title]$fulltext[footer $title $author $edited 1]"
 	return $document
 }
 
 proc fourohfour {title} {
-	set document "<!DOCTYPE html>
-	<html>
-	<head><title>Cannot find [niceify $title]</title></head>
-	<body>
-	<h1>Cannot find [niceify $title]</h1>
-	<p>You can <a href='$title?mode=edit'>create this page</a></p>
-	</body>
-	</html>"
+	set document "[header $title {Cannot find}]<p>You can <a href='$title?mode=edit'>create this page</a></p>[footer $title]"
 }
 
-proc uglify {title} {
-	set str ""
-	foreach i [split $title ""] {
-		if {[string is alnum $i]} {
-			append str $i
-		} elseif {$i eq " " || $i eq "_"} {
-			append str "_"
-		} elseif {$i eq "-"} {
-			append str $i
-		}
-	}
-	return $str
-}
-
-proc niceify {title} {
-	string map {"_" " "} $title
-}
+proc niceify {title} { string map {"_" " "} $title }
 
 if {0} {
 if {$env(PATH_INFO) eq "/_setup"} {
@@ -237,16 +196,9 @@ if {![info exists env(PATH_INFO)]} {set env(PATH_INFO) "/Main"}
 ::ncgi::parse
 
 set p -1
-while {[string index $env(PATH_INFO) $p] eq "/"} {
-	incr p -1
-}
-
+while {[string index $env(PATH_INFO) $p] eq "/"} { incr p -1 }
 set page [string range $env(PATH_INFO) 1 end]
-
-if {$page eq ""} {
-	set page Main
-}
-
+if {$page eq ""} { set page Main }
 set mode [::ncgi::value mode]
 
 if {$page eq "_toc"} {
@@ -289,4 +241,5 @@ if {$page eq "_toc"} {
 
 	::ncgi::header text/plain
 	puts $stuff
+	puts $errorInfo
 }
