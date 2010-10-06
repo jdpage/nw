@@ -2,69 +2,115 @@
 
 if {[catch {
 
-package require sqlite3
-#load /usr/local/lib/sqlite3/libtclsqlite3.so sqlite
+#package require sqlite3
+load /usr/local/lib/sqlite3/libtclsqlite3.so sqlite
 package require ncgi
+package require sha1
 
 sqlite3 db "/home/protected/nw/wiki.db"
 
-proc setup {} {
-	db eval {create table articles (title text, author text, content text, edited integer)}
-}
+db eval {create table if not exists articles (title text, author text, content text, edited integer)}
+db eval {create table if not exists users (name text, password text)}
 
 proc header {title {extra ""} {linkit 0}} {
-	set head "<!DOCTYPE html><html><head><title>$extra [niceify $title]</title></head><body>"
+	set head "<!DOCTYPE html><html><head><title>$extra [niceify $title]</title>
+<link rel='stylesheet' href='http://yandex.st/highlightjs/5.12/styles/default.min.css'>
+<script src='http://yandex.st/highlightjs/5.12/highlight.min.js' type='text/javascript'></script>
+<script type='text/javascript'>
+hljs.tabReplace = '    ';
+hljs.initHighlightingOnLoad();
+</script></head><body>"
 	if {$linkit} {
-		append head "<h1>$extra <a href='$title'>[niceify $title]</a></h1>"
+		append head "<h1>$extra [link $title [niceify $title]]</h1>"
 	} else {
 		append head "<h1>$extra [niceify $title]</h1>"
 	}
 	return $head
 }
 
+proc link {href {text ""}} {
+	if {[regexp {.*(/|\?).*} $href] || [string index $href 0] eq "_"} {
+	} elseif {[regexp {mailto:.*} $href]} {} elseif {[regexp {.*@.+} $href]} {
+		set href "mailto:$href"
+	} else {
+		if {![exists $href]} {set href "$href' style='color:red"}
+	}
+	set l "<a href='$href'>"; if {$text ne ""} {append l $text} else {append l $href}; return "$l</a>"
+}
+
+proc entry {text name {value ""}} { return "$text: <input type='text' name='$name' value='$value' /><br />" }
+proc password {text name} {return "$text: <input type='password' name='$name' /><br />"}
+proc submit {text} {return "<input type='submit' value='$text' />"}
+proc embed {name value} {return "<input type='hidden' name='$name' value='$value' />"}
+proc errmsg {text} {return "<span style='color:red'>$text</span><br />"}
+
 proc footer {title {author ""} {edited ""} {links 0}} {
 	if {$links} {
 		set s "<hr /><p><em>"
-		if {$edited ne ""} {append s "Last edited at [clock format $edited] "}
-		if {$author ne ""} {append s "by <a href=\"$author\">$author</a> "}
-		append s "\[<a href='$title?mode=edit'>Edit</a> - <a href='$title?mode=old'>History</a>\]</em></p></body></html>"
+		if {$edited ne ""} {append s "Last edited [fuzz [expr {[clock seconds] - $edited}]] ago "}
+		if {$author ne ""} {append s "by [link $author] "}
+		append s "\[[link $title?mode=edit Edit] - [link $title?mode=old History] - [link Main] - [link _toc {List all pages}]\]</em></p></body></html>"
 	} else {
 		return "</body></html>"
 	}
 }
 
+proc s {n} {expr {$n == 1 ? {} : {s}}}
+proc fuzz {t} {
+	if {$t < 60} {
+		return "$t second[s $t]"
+	} elseif {$t < 3600} {
+		set t [expr {$t/60}]
+		return "$t minute[s $t]"
+	} elseif {$t < 86400} {
+		set t [expr {$t/3600}]
+		return "$t hour[s $t]"
+	} elseif {$t < 604800} {
+		set t [expr {$t/86400}]
+		return "$t day[s $t]"
+	} elseif {$t < 2629800} {
+		set t [expr {$t/604800}]
+		return "$t week[s $t]"
+	} elseif {$dtime < 31557600} {
+		set t [expr {$t/2629800}]
+		return "$t month[s $t]"
+	} else {
+		set t [expr {$t/31557600}]
+		return "$t year[s $t]"
+	}
+}
+
 proc addentry {title author text} {
+	if {[string index $title 0] eq "_"} { return }
 	set time [clock seconds]
 	db eval {INSERT INTO articles VALUES($title,$author,$text,$time)}
 }
 
 proc versionlist {title} {
 	set data [db eval {select * from articles where title=$title order by edited desc}]
-	if {[llength $data] == 0} {
-		return 0
-	}
-	
+	if {[llength $data] == 0} { return 0 }
 	set document "[header $title {History of} 1]<ul>"
-	
 	foreach {t author text edited} $data {
-		append document "<li><a href='$title?mode=old&time=$edited'>[clock format $edited]</a> by <a href='$author'>$author</a></li>"
+		append document "<li>[link $title?mode=old&time=$edited [fuzz [expr {[clock seconds] - $edited}]]\ ago] by [link $author]</li>"
 	}
-	
 	append document "</ul>[footer $title]"
-	return $document
 }
 
 proc toc {} {
 	set data [lsort -dictionary -unique [db eval {select title from articles}]]
 	set document "[header Table_of_Contents]<ul>"
-
-	foreach title $data {
-		append document "<li><a href='$title'>$title</a></li>"
-	}
-	
+	foreach title $data { append document "<li>[link $title]</li>" }
 	append document "</ul>[footer Table_of_Contents]"
-	return $document
 }
+
+proc users {} {
+	set data [lsort -dictionary -unique [db eval {select name from users}]]
+	set document "[header User_List]<ul>"
+	foreach name $data {append document "<li>[link $name]</li>"}
+	append document "</ul>[footer User_List]"
+}
+
+proc exists {title} {expr {[llength [db eval {select title from articles where title=$title}]] > 0}}
 
 proc fetchentry {title {posted newest}} {
 	set data [db eval {select * from articles where title=$title order by edited desc}]
@@ -78,18 +124,55 @@ proc fetchentry {title {posted newest}} {
 		set edited [lindex $data 3]
 	} else {
 		foreach {title author text edited} $data {
-			if {$posted >= $edited} {
-				break
-			}
+			if {$posted >= $edited} {break}
 		}
 	}
 	
 	return [list $title $author $text $edited]
 }
 
+proc auth {name pass} {
+	set d [db eval {select password from users where name=$name}]
+	expr {[llength $d] > 0 && [lindex $d 0] eq [::sha1::sha1 $pass]}
+}
+
+proc createuser {} {
+	set badname 0
+	set nomatch 0
+	set submit [::ncgi::value submit]
+	set username [::ncgi::value username]
+	set password [::ncgi::value password]
+	set confirm [::ncgi::value password]
+	if {$submit eq "true"} {
+		if {$username eq "" || [userexists $username]} {
+			set badname 1
+		} elseif {$password ne $confirm} {
+			set nomatch 1
+		} else {
+			set hash [::sha1::sha1 $password]
+			db eval {INSERT INTO users VALUES($username,$hash)}
+			return "[header Success][link Main {Return to Main}][footer Success]"
+		}
+	}
+	set document "[header Create_User]
+<form action='_createuser' method='POST'>
+[if {$badname} {errmsg {Invalid username (may already exist)}}]
+[entry Username username $username]
+[if {$nomatch} {errmsg {Passwords do not match}}]
+[password Password password]
+[password {Confirm password} confirm]
+[embed submit true]
+[submit Create]
+"
+}
+
+proc userexists {name} {expr {[llength [db eval {select name from users where name=$name}]] > 0}}
+
 proc editpage {title} {
-	set entry [fetchentry $title]
-	if {$entry != 0} {
+	if {[string index $title 0] eq "_"} { return }
+	if {[::ncgi::value content] ne ""} {
+		set data [::ncgi::value content]
+	} elseif {[set entry [fetchentry $title]] != 0} {
 		set data [lindex $entry 2]
 	} else {
 		set data ""
@@ -99,9 +182,10 @@ proc editpage {title} {
 <form action=\"$title\" method=\"POST\">
 <textarea rows='50' cols='80' name='content'>$data</textarea>
 <br /><br />
-Username: <input type='text' name='author' />
-<input type='hidden' name='mode' value='save' />
-<input type='submit' value='Save' />
+[entry Username author]
+[password Password password]
+[embed mode save]
+[submit Save]
 </form>
 [footer $title]"
 }
@@ -117,9 +201,9 @@ proc renderentry {e} {
 	
 	foreach line $rawtext {
 		if {[regexp {^ {4,}.*$} $line]} {
-			if {$next ne "</pre>"} { lappend out "$next<pre>" }
-			lappend out $line
-			set next "</pre>"
+			if {$next ne "</code></pre>"} { lappend out "$next<pre><code>" }
+			lappend out [string map {"<" "&lt;" ">" "&gt;"} $line]
+			set next "</code></pre>"
 			continue
 		}
 		
@@ -154,10 +238,9 @@ proc renderentry {e} {
 			set link ""
 			set texturl [string range $line [lindex $url 0] [lindex $url 1]]
 			if {[lindex $text 0] == -1} {
-				set link "<a href='$texturl'>[niceify $texturl]</a>"
+				set link [link $texturl [niceify $texturl]]
 			} else {
-				set texttext [string range $line [lindex $text 0] [lindex $text 1]]
-				set link "<a href='$texturl'>$texttext</a>"
+				set link [link $texturl [string range $line [lindex $text 0] [lindex $text 1]]]
 			}
 			set line [string replace $line [lindex $slot 0] [lindex $slot 1] $link]
 		}
@@ -176,70 +259,68 @@ proc renderentry {e} {
 }
 
 proc fourohfour {title} {
-	set document "[header $title {Cannot find}]<p>You can <a href='$title?mode=edit'>create this page</a></p>[footer $title]"
+	set document "[header $title {Cannot find}]<p>You can [link $title?mode=edit {create this page}]</p>[footer $title]"
 }
 
 proc niceify {title} { string map {"_" " "} $title }
-
-if {0} {
-if {$env(PATH_INFO) eq "/_setup"} {
-	setup
-	::ncgi::header text/plain
-	puts "Done"
-	exit
-}
-}
 
 if {![info exists env(PATH_INFO)]} {set env(PATH_INFO) "/Main"}
 
 ::ncgi::header
 ::ncgi::parse
 
-set p -1
-while {[string index $env(PATH_INFO) $p] eq "/"} { incr p -1 }
 set page [string range $env(PATH_INFO) 1 end]
 if {$page eq ""} { set page Main }
-set mode [::ncgi::value mode]
 
-if {$page eq "_toc"} {
-	puts [toc]
-} elseif {$mode eq "edit"} {
-	puts [editpage $page]
-} elseif {$mode eq "save"} {
-	set author [::ncgi::value author]
-	set content [::ncgi::value content]
-	addentry $page $author $content
-	puts [renderentry [fetchentry $page]]
-} elseif {$mode eq "old"} {
-	set time [::ncgi::value time]
-	if {$time eq ""} {
-		set e [versionlist $page]
-		if {$e == 0} {
-			puts [fourohfour $page]
-		} else {
-			puts $e
-		}
-	} else {
-		set e [fetchentry $page $time]
-		if {$e == 0} {
-			puts [fourohfour $page]
-		} else {
-			puts "<p><em>This is version of the article from sometime in the past. <a href='$page'>The newest version</a> may have substantial differences.</em></p>"
-			puts [renderentry $e]
-		}
+if {[string index $page 0] eq "_"} {
+	switch $page {
+		_toc {puts [toc]}
+		_users {puts [users]}
+		_createuser {puts [createuser]}
+		default {puts "Unknown special page"}
 	}
 } else {
-	set e [fetchentry $page]
-	if {$e == 0} {
-		puts [fourohfour $page]
-	} else {
-		puts [renderentry $e]
+	switch [::ncgi::value mode] {
+		edit { puts [editpage $page] }
+		save {
+			if {[auth [::ncgi::value author] [::ncgi::value password]]} {
+				addentry $page [::ncgi::value author] [::ncgi::value content]
+				puts [renderentry [fetchentry $page]]
+			} else {
+				puts [editpage $page]
+			}
+		}
+		old {
+			set time [::ncgi::value time]
+			if {$time eq ""} {
+				set e [versionlist $page]
+				if {$e == 0} {set e [fourohfour $page]}
+				puts $e
+			} else {
+				set e [fetchentry $page $time]
+				if {$e == 0} {
+					puts [fourohfour $page]
+				} else {
+					[lset e 2 "<p><em>This is version of the article from sometime in the past. [link $page {The newest version}] may have substantial differences.</em></p>[lindex $e 2]"]
+					puts [renderentry $e]
+				}
+			}
+		}
+		default {
+			if {[set e [fetchentry $page]] != 0} {
+				puts [renderentry $e]
+			} else {
+				puts [fourohfour $page]
+			}
+		}
 	}
 }
 
 } stuff]} {
 
 	::ncgi::header text/plain
+	puts "<pre>"
 	puts $stuff
 	puts $errorInfo
+	puts "</pre>"
 }
