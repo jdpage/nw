@@ -10,7 +10,8 @@ package require sha1
 sqlite3 db "/home/protected/nw/wiki.db"
 
 db eval {create table if not exists articles (title text, author text, content text, edited integer)}
-db eval {create table if not exists users (name text, password text)}
+db eval {create table if not exists users (name text unique, password text)}
+db eval {create table if not exists links (page text, ref text)}
 
 proc header {title {extra ""} {linkit 0}} {
 	set head "<!DOCTYPE html><html><head><title>$extra [niceify $title]</title>
@@ -20,14 +21,20 @@ proc header {title {extra ""} {linkit 0}} {
 hljs.tabReplace = '    ';
 hljs.initHighlightingOnLoad();
 </script></head><body>"
-	if {$linkit} {
+	if {$linkit == 1} {
 		append head "<h1>$extra [link $title [niceify $title]]</h1>"
+	} elseif {$linkit == 2} {
+		append head "<h1>$extra [link $title?mode=refs [niceify $title]]</h1>"
 	} else {
 		append head "<h1>$extra [niceify $title]</h1>"
 	}
 	return $head
 }
 
+proc isinternal {href} {
+	expr {![regexp {.*(/|\?).*} $href] && [string index $href 0] ne "_" && \
+		![regexp {mailto:.*} $href] && ![regexp {.*@.+} $href]}
+}
 proc link {href {text ""}} {
 	if {[regexp {.*(/|\?).*} $href] || [string index $href 0] eq "_"} {
 	} elseif {[regexp {mailto:.*} $href]} {} elseif {[regexp {.*@.+} $href]} {
@@ -44,12 +51,13 @@ proc submit {text} {return "<input type='submit' value='$text' />"}
 proc embed {name value} {return "<input type='hidden' name='$name' value='$value' />"}
 proc errmsg {text} {return "<span style='color:red'>$text</span><br />"}
 
-proc footer {title {author ""} {edited ""} {links 0}} {
+proc footer {title {author ""} {edited ""} {links 0} {meta 1}} {
 	if {$links} {
 		set s "<hr /><p><em>"
-		if {$edited ne ""} {append s "Last edited [fuzz [ago $edited}]] ago "}
-		if {$author ne ""} {append s "by [link $author] "}
-		append s "\[[link $title?mode=edit Edit] - [link $title?mode=old History] - [link Main] - [link _toc {List all pages}]\]</em></p></body></html>"
+		if {$edited ne ""} {append s "Last edited [fuzz [ago $edited]] ago"}
+		if {$author ne ""} {append s " by [link $author]"}
+		if {$meta} {append s ", [link $title?mode=edit Edit], [link $title?mode=old History] "}
+		append s "([link Main], [link _toc {List all pages}])</em></p></body></html>"
 	} else {
 		return "</body></html>"
 	}
@@ -81,10 +89,50 @@ proc fuzz {t} {
 	}
 }
 
+proc clearlinks {fromtitle} {db eval {DELETE FROM links WHERE page=$fromtitle}}
+proc addlink {from to} {
+	if {[llength [db eval {SELECT * FROM links WHERE page=$from AND ref=$to}]] == 0} {
+		db eval {INSERT INTO links VALUES($from, $to)}
+	}
+}
+
+proc reflist {to} {
+	set document "[header $to {References to} 1]<ul>"
+	set data [db eval {SELECT page FROM links WHERE ref=$to}]
+	if {[llength $data] == 0} {
+		append document "<li>No references found</li>"
+	} else {
+		foreach ref $data {
+			append document "<li>[link $ref]</li>"
+		}
+	}
+	append document "</ul>[footer $to "" "" 1 0]"
+}
+
 proc addentry {title author text} {
 	if {[string index $title 0] eq "_"} { return }
 	set time [clock seconds]
 	db eval {INSERT INTO articles VALUES($title,$author,$text,$time)}
+	clearlinks $title
+	set links [regexp -all -inline -- {\[\[(?!\[)(.*?)(?: .*?)?\]\]} $line] ; # ]
+	foreach {slot url} $links {
+		if {[isinternal $url]} {
+			addlink $title $url
+		}
+	}
+}
+
+proc relink {title} {
+	set e [fetchentry $title]
+	if {$e != 0} {
+		clearlinks $title
+		set links [regexp -all -inline -- {\[\[(?!\[)(.*?)(?: .*?)?\]\]} [lindex $e 2]] ; # ]
+		foreach {slot url} $links {
+			if {[isinternal $url]} {
+				addlink $title $url
+			}
+		}
+	}
 }
 
 proc versionlist {title} {
@@ -234,7 +282,7 @@ proc renderentry {e} {
 			if {$next ne "</p>"} { lappend out "$next<p>" }
 			set next "</p>"
 		}
-		set links [lreverse [regexp -all -inline -indices -- {\[\[(?!\[)(.*?)(?: (.*?))?\]\]} $line]]
+		set links [lreverse [regexp -all -inline -indices -- {\[\[(?!\[)(.*?)(?: (.*?))?\]\]} $line]] ; # ]
 		foreach {text url slot} $links {
 			set link ""
 			set texturl [string range $line [lindex $url 0] [lindex $url 1]]
@@ -255,7 +303,7 @@ proc renderentry {e} {
 	}
 	lappend out $next
 	set fulltext [join $out ""]
-	set document "[header $title]$fulltext[footer $title $author $edited 1]"
+	set document "[header $title "" 2]$fulltext[footer $title $author $edited 1]"
 	return $document
 }
 
@@ -278,11 +326,23 @@ if {[string index $page 0] eq "_"} {
 		_toc {puts [toc]}
 		_users {puts [users]}
 		_createuser {puts [createuser]}
+		_links {
+			foreach {f t} [db eval {select * from links}] {
+				puts "$f -> $t<br />"
+			}
+		}
+		_relink {
+			foreach t [lsort -dictionary -unique [db eval {select title from articles}]] {
+				puts "Relinking $t<br />"
+				relink $t
+			}
+		}
 		default {puts "Unknown special page"}
 	}
 } else {
 	switch [::ncgi::value mode] {
 		edit { puts [editpage $page] }
+		refs { puts [reflist $page] }
 		save {
 			if {[auth [::ncgi::value author] [::ncgi::value password]]} {
 				addentry $page [::ncgi::value author] [::ncgi::value content]
