@@ -47,7 +47,7 @@ proc errmsg {text} {return "<span style='color:red'>$text</span><br />"}
 proc footer {title {author ""} {edited ""} {links 0}} {
 	if {$links} {
 		set s "<hr /><p><em>"
-		if {$edited ne ""} {append s "Last edited [fuzz [expr {[clock seconds] - $edited}]] ago "}
+		if {$edited ne ""} {append s "Last edited [fuzz [ago $edited}]] ago "}
 		if {$author ne ""} {append s "by [link $author] "}
 		append s "\[[link $title?mode=edit Edit] - [link $title?mode=old History] - [link Main] - [link _toc {List all pages}]\]</em></p></body></html>"
 	} else {
@@ -55,6 +55,7 @@ proc footer {title {author ""} {edited ""} {links 0}} {
 	}
 }
 
+proc ago {t} {expr {[clock seconds] - $t}}
 proc s {n} {expr {$n == 1 ? {} : {s}}}
 proc fuzz {t} {
 	if {$t < 60} {
@@ -91,7 +92,7 @@ proc versionlist {title} {
 	if {[llength $data] == 0} { return 0 }
 	set document "[header $title {History of} 1]<ul>"
 	foreach {t author text edited} $data {
-		append document "<li>[link $title?mode=old&time=$edited [fuzz [expr {[clock seconds] - $edited}]]\ ago] by [link $author]</li>"
+		append document "<li>[link $title?mode=old&time=$edited [fuzz [ago $edited]]\ ago] by [link $author]</li>"
 	}
 	append document "</ul>[footer $title]"
 }
