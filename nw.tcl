@@ -119,6 +119,13 @@ proc renderentry {e} {
 			continue
 		}
 		
+		set escaped [lreverse [regexp -all -inline -indices -- {\\.} $line]]
+		foreach escape $escaped {
+			set char [string index $line [lindex $escape 1]]
+			set escchar "&#[scan $char %c];"
+			set line [string replace $line [lindex $escape 0] [lindex $escape 1] $escchar]
+		}
+		
 		if {[regexp {(\={2,6})(.*?)\1} $line match level text]} {
 			set ln [string length $level]
 			set line "<h$ln>$text</h$ln>"
@@ -167,8 +174,9 @@ proc renderentry {e} {
 		regsub -all -- {(?!\M)@(.*?)@(?!\m)} $line {<code>\1</code>} line
 		lappend out $line
 	}
+	lappend out $next
 	
-	set fulltext [join $out \n]
+	set fulltext [join $out ""]
 	
 	set document "<!DOCTYPE html>
 	<html>
