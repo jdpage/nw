@@ -10,7 +10,7 @@ package require sha1
 sqlite3 db "/home/protected/nw/wiki.db"
 
 db eval {create table if not exists articles (title text, author text, content text, edited integer)}
-db eval {create table if not exists users (name text unique, password text)}
+db eval {create table if not exists users (name text unique, password text, permissions integer)}
 db eval {create table if not exists links (page text, ref text)}
 
 proc header {title {extra ""} {linkit 0}} {
@@ -114,7 +114,7 @@ proc addentry {title author text} {
 	set time [clock seconds]
 	db eval {INSERT INTO articles VALUES($title,$author,$text,$time)}
 	clearlinks $title
-	set links [regexp -all -inline -- {\[\[(?!\[)(.*?)(?: .*?)?\]\]} $line] ; # ]
+	set links [regexp -all -inline -- {\[\[(?!\[)(.*?)(?: .*?)?\]\]} $text] ; # ]
 	foreach {slot url} $links {
 		if {[isinternal $url]} {
 			addlink $title $url
@@ -199,7 +199,7 @@ proc createuser {} {
 			set nomatch 1
 		} else {
 			set hash [::sha1::sha1 $password]
-			db eval {INSERT INTO users VALUES($username,$hash)}
+			db eval {INSERT INTO users VALUES($username,$hash,2)}
 			return "[header Success][link Main {Return to Main}][footer Success]"
 		}
 	}
@@ -362,7 +362,7 @@ if {[string index $page 0] eq "_"} {
 				if {$e == 0} {
 					puts [fourohfour $page]
 				} else {
-					[lset e 2 "<p><em>This is version of the article from sometime in the past. [link $page {The newest version}] may have substantial differences.</em></p>[lindex $e 2]"]
+					lset e 2 "<p><em>This is version of the article from sometime in the past. [link $page {The newest version}] may have substantial differences.</em></p>[lindex $e 2]"
 					puts [renderentry $e]
 				}
 			}
