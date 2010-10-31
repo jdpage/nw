@@ -2,8 +2,7 @@
 
 if {[catch {
 
-#package require sqlite3
-load /usr/local/lib/sqlite3/libtclsqlite3.so sqlite
+package require sqlite3
 package require ncgi
 package require sha1
 
