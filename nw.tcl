@@ -8,62 +8,69 @@ package require sha1
 
 sqlite3 db "/home/protected/nw/wiki.db"
 
-db eval {create table if not exists articles (title text, author text, content text, edited integer)}
-db eval {create table if not exists users (name text unique, password text, permissions integer)}
-db eval {create table if not exists links (page text, ref text)}
-
-proc header {title {extra ""} {linkit 0}} {
-	set head "<!DOCTYPE html><html><head><title>$extra [niceify $title]</title>
-<link rel='stylesheet' href='http://yandex.st/highlightjs/5.12/styles/default.min.css'>
-<script src='http://yandex.st/highlightjs/5.12/highlight.min.js' type='text/javascript'></script>
-<script type='text/javascript'>
-hljs.tabReplace = '    ';
-hljs.initHighlightingOnLoad();
-</script></head><body>"
-	if {$linkit == 1} {
-		append head "<h1>$extra [link $title [niceify $title]]</h1>"
-	} elseif {$linkit == 2} {
-		append head "<h1>$extra [link $title?mode=refs [niceify $title]]</h1>"
-	} else {
-		append head "<h1>$extra [niceify $title]</h1>"
+namespace eval element { # {{{
+	proc entry {txt_label txt_name {txt_default ""}} { return "$txt_label: <input type='text' name='$txt_name' value='$txt_default' /><br />" }
+	proc password {txt_label txt_name} {return "$txt_label: <input type='password' name='$txt_name' /><br />"}
+	proc submit {txt_label} {return "<input type='submit' value='$txt_label' />"}
+	proc embed {txt_name ff_value} {return "<input type='hidden' name='$txt_name' value='$ff_value' />"}
+	proc errmsg {txt_mesg} {return "<span class='error'>$txt_mesg</span><br />"}
+	proc link {href {txt_text ""}} {
+		if {[regexp {.*(/|\?).*} $href] || [string index $href 0] eq "_"} {
+		} elseif {[regexp {mailto:.*} $href]} {} elseif {[regexp {.*@.+} $href]} {
+			set href "mailto:$href"
+		} else {
+			if {![exists $href]} {set href "$href' style='color:red"}
+		}
+		set l "<a href='$href'>"; if {$text ne ""} {append l $txt_text} else {append l $href}; return "$l</a>"
 	}
-	return $head
-}
-
-proc isinternal {href} {
-	expr {![regexp {.*(/|\?).*} $href] && [string index $href 0] ne "_" && \
-		![regexp {mailto:.*} $href] && ![regexp {.*@.+} $href]}
-}
-proc link {href {text ""}} {
-	if {[regexp {.*(/|\?).*} $href] || [string index $href 0] eq "_"} {
-	} elseif {[regexp {mailto:.*} $href]} {} elseif {[regexp {.*@.+} $href]} {
-		set href "mailto:$href"
-	} else {
-		if {![exists $href]} {set href "$href' style='color:red"}
+	proc title {ut_page {txt_extra ""} {f_linkit 0}} {
+		if {$f_linkit == 1} {
+			return "<h1>$txt_extra [link $ut_page [niceify $ut_page]]</h1>"
+		} elseif {$f_linkit == 2} {
+			return "<h1>$txt_extra [link $ut_page?mode=refs [niceify $ut_page]]</h1>"
+		}
+		return "<h1>$txt_extra [niceify $ut_page]</h1>"
 	}
-	set l "<a href='$href'>"; if {$text ne ""} {append l $text} else {append l $href}; return "$l</a>"
-}
+	namespace export *
+	namespace ensemble create
+} # }}}
 
-proc entry {text name {value ""}} { return "$text: <input type='text' name='$name' value='$value' /><br />" }
-proc password {text name} {return "$text: <input type='password' name='$name' /><br />"}
-proc submit {text} {return "<input type='submit' value='$text' />"}
-proc embed {name value} {return "<input type='hidden' name='$name' value='$value' />"}
-proc errmsg {text} {return "<span style='color:red'>$text</span><br />"}
+namespace eval page { # {{{
+} # }}}
 
-proc footer {title {author ""} {edited ""} {links 0} {meta 1}} {
-	if {$links} {
-		set s "<hr /><p><em>"
-		if {$edited ne ""} {append s "Last edited [fuzz [ago $edited]] ago"}
-		if {$author ne ""} {append s " by [link $author]"}
-		if {$meta} {append s ", [link $title?mode=edit Edit], [link $title?mode=old History] "}
-		append s "([link Main], [link _toc {List all pages}])</em></p></body></html>"
-	} else {
-		return "</body></html>"
+namespace eval link { # {{{
+	proc clear {::db eval {DELETE FROM links WHERE page=$id}}
+	proc add {from to} {
+		# Check that this is 
+		if {[llength [::db eval {SELECT page FROM links WHERE page=$from AND ref=$to}]] == 0} {
+			::db eval {INSERT INTO links VALUES($from, $to)}
+		}
 	}
-}
+	proc isinternal {href} {
+		expr {![regexp {.*(/|\?).*} $href] && [string index $href 0] ne "_" && \
+			![regexp {mailto:.*} $href] && ![regexp {.*@.+} $href]}
+	}
+	proc find {to} {::db eval {SELECT page FROM links WHERE ref=$to}}
+	namespace export *
+	namespace ensemble create
+} # }}}
 
+namespace eval user { # {{{
+} # }}}
+
+# datatypes: id, tt = text title, ut = url title, txt = text string, f = flag, ff = freeform
+
+proc footer {title {author ""} {edited ""} {meta 1}} { # {{{
+	set s "<hr /><p><em>"
+	if {$edited ne ""} {append s "Last edited [fuzz [ago $edited]] ago"}
+	if {$author ne ""} {append s " by [link $author]"}
+	if {$meta} {append s ", [link $title?mode=edit Edit], [link $title?mode=old History] "}
+	append s "([link Main], [link _toc {List all pages}])</em></p>"
+} # }}}
+
+# time functions {{{
 proc ago {t} {expr {[clock seconds] - $t}}
-proc s {n} {expr {$n == 1 ? {} : {s}}}
+proc s {n} { expr {$n == 1 ? {} : {s}} }
 proc fuzz {t} {
 	if {$t < 60} {
 		return "$t second[s $t]"
@@ -86,16 +93,9 @@ proc fuzz {t} {
 		set t [expr {$t/31557600}]
 		return "$t year[s $t]"
 	}
-}
+} # }}}
 
-proc clearlinks {fromtitle} {db eval {DELETE FROM links WHERE page=$fromtitle}}
-proc addlink {from to} {
-	if {[llength [db eval {SELECT * FROM links WHERE page=$from AND ref=$to}]] == 0} {
-		db eval {INSERT INTO links VALUES($from, $to)}
-	}
-}
-
-proc reflist {to} {
+proc reflist {to} { # {{{
 	set document "[header $to {References to} 1]<ul>"
 	set data [db eval {SELECT page FROM links WHERE ref=$to}]
 	if {[llength $data] == 0} {
@@ -105,10 +105,10 @@ proc reflist {to} {
 			append document "<li>[link $ref]</li>"
 		}
 	}
-	append document "</ul>[footer $to "" "" 1 0]"
-}
+	append document "</ul>[footer $to \"\" \"\" 1 0]"
+} # }}}
 
-proc addentry {title author text} {
+proc addentry {title author text} { # {{{
 	if {[string index $title 0] eq "_"} { return }
 	set time [clock seconds]
 	db eval {INSERT INTO articles VALUES($title,$author,$text,$time)}
@@ -119,9 +119,9 @@ proc addentry {title author text} {
 			addlink $title $url
 		}
 	}
-}
+} # }}}
 
-proc relink {title} {
+proc relink {title} { # {{{
 	set e [fetchentry $title]
 	if {$e != 0} {
 		clearlinks $title
@@ -132,9 +132,9 @@ proc relink {title} {
 			}
 		}
 	}
-}
+} # }}}
 
-proc versionlist {title} {
+proc versionlist {title} { # {{{
 	set data [db eval {select * from articles where title=$title order by edited desc}]
 	if {[llength $data] == 0} { return 0 }
 	set document "[header $title {History of} 1]<ul>"
@@ -142,25 +142,25 @@ proc versionlist {title} {
 		append document "<li>[link $title?mode=old&time=$edited [fuzz [ago $edited]]\ ago] by [link $author]</li>"
 	}
 	append document "</ul>[footer $title]"
-}
+} # }}}
 
-proc toc {} {
+proc toc {} { # {{{
 	set data [lsort -dictionary -unique [db eval {select title from articles}]]
 	set document "[header Table_of_Contents]<ul>"
 	foreach title $data { append document "<li>[link $title]</li>" }
 	append document "</ul>[footer Table_of_Contents]"
-}
+} # }}}
 
-proc users {} {
+proc users {} { # {{{
 	set data [lsort -dictionary -unique [db eval {select name from users}]]
 	set document "[header User_List]<ul>"
 	foreach name $data {append document "<li>[link $name]</li>"}
 	append document "</ul>[footer User_List]"
-}
+} # }}}
 
 proc exists {title} {expr {[llength [db eval {select title from articles where title=$title}]] > 0}}
 
-proc fetchentry {title {posted newest}} {
+proc fetchentry {title {posted newest}} { # {{{
 	set data [db eval {select * from articles where title=$title order by edited desc}]
 	if {[llength $data] == 0} {
 		return 0
@@ -177,14 +177,14 @@ proc fetchentry {title {posted newest}} {
 	}
 	
 	return [list $title $author $text $edited]
-}
+} # }}}
 
-proc auth {name pass} {
+proc auth {name pass} { # {{{
 	set d [db eval {select password from users where name=$name}]
 	expr {[llength $d] > 0 && [lindex $d 0] eq [::sha1::sha1 $pass]}
-}
+} # }}}
 
-proc createuser {} {
+proc createuser {} { # {{{
 	set badname 0
 	set nomatch 0
 	set submit [::ncgi::value submit]
@@ -212,11 +212,11 @@ proc createuser {} {
 [embed submit true]
 [submit Create]
 "
-}
+} # }}}
 
 proc userexists {name} {expr {[llength [db eval {select name from users where name=$name}]] > 0}}
 
-proc editpage {title} {
+proc editpage {title} { # {{{
 	if {[string index $title 0] eq "_"} { return }
 	if {[::ncgi::value content] ne ""} {
 		set data [::ncgi::value content]
