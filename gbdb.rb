@@ -1,19 +1,19 @@
 #!/usr/bin/env ruby
 
 require "sqlite3"
-require "digest/sha1"
+require "sha1"
 
 dbname = $*[0]
 
-db = Sqlite3::Database.new(dbname)
+db = SQLite3::Database.new(dbname)
 
 # get data
 
 print "Input admin username (use letters, numbers, and underscores only; any \
        other characters will be ignored) > "
-username = gets
+username = $stdin.gets
 print "Input admin password > "
-passhash = Digest::SHA1.hexdigest(gets)
+passhash = SHA1.hexdigest( $stdin.gets )
 
 db.execute(%{
 	CREATE TABLE users (
@@ -95,5 +95,5 @@ reflist = '
 
 edited = Time.now.to_i
 
-db.execute(%{INSERT INTO pages VALUES(NULL, template_main, ?, ?, ?, 2, 9)}, username, pagetemplate, edited);
-db.execute(%{INSERT INTO pages VALUES(NULL, stylesheet_main, ?, ?, ?, 1, 9)}, username, stylesheet, edited);
+db.execute(%{INSERT INTO pages VALUES(NULL, 'template_main', ?, ?, ?, 2, 9);}, username, pagetemplate, edited);
+db.execute(%{INSERT INTO pages VALUES(NULL, 'stylesheet_main', ?, ?, ?, 1, 9);}, username, stylesheet, edited);
