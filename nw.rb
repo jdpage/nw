@@ -38,21 +38,67 @@ module Element
 	end
 end
 
-module Page
+class Table
+	def initialize(db, table)
+		@db = db
+		@table = table
+		@columns = @db.execute2("SELECT * FROM #{@table} WHERE 0")[0]
+		@columns.shift # get rid of id
+	end
+	def [](id)
+		Row.new( id, @db, @table )
+	end
+	def has?(id); @db.get_first_value("SELECT count(*) FROM #{@table} WHERE id=?", id).to_i > 0; end
+	def size(); @db.get_first_value("SELECT count(*) FROM #{@table}"); end
+	def each()
+		ids = @db.execute("SELECT id FROM #{@table}")
+		ids.each do |id|
+			yield Row.new(id[0], @db, @table)
+		end
+	end
+	def add(row)
+		@db.execute("INSERT INTO #{@table} VALUES(NULL, #{ @columns.collect { |col| row[col] } .join(", ") })")
+		@db.get_first_value("SELECT id FROM #{@table} WHERE #{ @columns.collect { |col| "#{col}=#{row[col]}" } .join(", ") }")
+	end
+	def drop(id)
+		@db.execute("DELETE FROM #{@table} WHERE id=?", id)
+	end
 end
 
-module Link
-	def clear(id); $db.execute("DELETE FROM links WHERE page=?", id); end
-	def add(from, to)
-		$db.execute "INSERT INTO links VALUES(?, ?)", from, to if \
-		  $db.get_first_value "SELECT count(*) FROM links WHERE page=? AND ref=?", \
-		  from, to.to_i == 0
+class Row
+	def initialize( id, db, table )
+		@id = id
+		@db = db
+		@table = table
 	end
-	def internal?(href)
+	def [](col)
+		@db.get_first_value("SELECT #{col} FROM #{@table} WHERE id=?", @id)
+	end
+	def []=(col, val)
+		@db.execute("UPDATE #{@table} SET #{col}=? WHERE id=?", val, @id)
+	end
+end
+
+class Links
+	def initialize(db)
+		@db = db
+	end
+	def clear(id); @db.execute("DELETE FROM links WHERE page=?", id); end
+	def add(from, to)
+		@db.execute "INSERT INTO links VALUES(?, ?)", from, to unless \
+		  @db.get_first_value("SELECT count(*) FROM links WHERE page=? AND ref=?", \
+		  from, to).to_i > 0
+	end
+	def self.internal?(href)
 		!(href.include? "/" or href.include? "?" or href ~= /^mailto:/ or href.include? "@")
 	end
-	def find(to)
-		$db.execute("SELECT page FROM links WHERE ref=?", to) do |row|
+	def to(ref)
+		@db.execute("SELECT page FROM links WHERE ref=?", to) do |row|
+			yield row[0]
+		end
+	end
+	def from(page)
+		@db.execute("SELECT ref FROM links WHERE page=?", page) do |row|
 			yield row[0]
 		end
 	end
