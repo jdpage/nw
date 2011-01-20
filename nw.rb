@@ -69,12 +69,7 @@ class Auth
 		@tab = Table.new db, table
 	end
 	def adduser(name, passwd, perms)
-		begin
-			@tab.add({:userid => "NULL", :name => name, :password => SHA1.hexdigest(passwd), :permissions => perms, :token => ""})
-			:ok
-		rescue SQLite3::SQLException
-			:badname
-		end
+		@tab.add({:userid => "NULL", :name => name, :password => SHA1.hexdigest(passwd), :permissions => perms, :token => ""})
 	end
 	def auth(name, passwd)
 		user = @tab.search_by :name, name
@@ -242,4 +237,8 @@ end
 
 class String
 	include SuperString
+end
+
+def handle_cgi
+	
 end
