@@ -1,19 +1,11 @@
 #!/usr/bin/env ruby
 
-require "sqlite3"
-require "sha1"
-require "cgi"
+require 'sha1'
+require 'cgi'
+require 'markaby'
+require 'sequel'
 
 module Element
-	def self.entry(label, name, val = "")
-		"%s: <input type='text' name='%s' value='%s' /><br />" % [label, name, val]
-	end
-	def self.password(label, name)
-		"%s: <input type='password' name='%s' /><br />" % [label, name]
-	end
-	def self.submit(label); "<input type='submit' value='%s' />" % label; end
-	def self.embed(name, val); "<input type='hidden' name='%s' value='%s' />" % [name, val]; end
-	def self.err_mesg(mesg); "<span class='error'>%s</span><br />" % mesg; end
 	def self.link(href, text = nil)
 		phref = href.dup
 		unless phref.include? "/" or phref.include? "?" or phref[0].to_c == "_"
@@ -35,69 +27,16 @@ module Element
 	end
 end
 
-class Table
-	def self.create(db, table, cols, fkeys)
-		db.execute(%{CREATE TABLE #{table} (#{
-			colsql = cols.collect {|col| "#{col.keys[0]} #{col[col.keys[0]]}"}
-			fksql = fkeys.collect {|l,f| "FOREIGN KEY(#{l}) REFERENCES #{f}"}
-			(colsql + fksql).join(", ")
-		})})
-		new(db, table)
-	end
-	def initialize(db, table)
-		@db = db
-		@table = table
-		@columns = @db.execute2("SELECT * FROM #{@table} WHERE 0")[0]
-		@columns.shift # get rid of id
-	end
-	def [](id)
-		Row.new( id, @db, @table )
-	end
-	def search_by(column, value)
-		id = @db.get_first_value("SELECT id FROM #{@table} WHERE #{column}=?", value)
-		return nil unless id
-		Row.new(id, @db, @table)
-	end
-	def has?(id); @db.get_first_value("SELECT count(*) FROM #{@table} WHERE id=?", id).to_i > 0; end
-	def size(); @db.get_first_value("SELECT count(*) FROM #{@table}"); end
-	def each()
-		ids = @db.execute("SELECT id FROM #{@table}")
-		ids.each do |id|
-			yield Row.new(id[0], @db, @table)
-		end
-	end
-	def add(row)
-		@db.execute("INSERT INTO #{@table} VALUES(NULL, #{ @columns.collect { |col| row[col] } .join(", ") })")
-		@db.get_first_value("SELECT id FROM #{@table} WHERE #{ @columns.collect { |col| "#{col}=#{row[col]}" } .join(", ") }")
-	end
-	def drop(id)
-		@db.execute("DELETE FROM #{@table} WHERE id=?", id)
-	end
-end
-
-class Row
-	def initialize( id, db, table )
-		@id = id
-		@db = db
-		@table = table
-	end
-	def [](col)
-		@db.get_first_value("SELECT #{col} FROM #{@table} WHERE id=?", @id)
-	end
-	def []=(col, val)
-		@db.execute("UPDATE #{@table} SET #{col}=? WHERE id=?", val, @id)
-	end
-end
-
 class Links
-	def initialize(db)
-		@db = db
+	def initialize(table)
+		@table = table
 	end
-	def clear(id); @db.execute("DELETE FROM links WHERE page=?", id); end
+	def clear(id)
+		@table.filter(:page => id).delete
+	end
 	def add(from, to)
-		@db.execute "INSERT INTO links VALUES(?, ?)", from, to unless \
-		  @db.get_first_value("SELECT count(*) FROM links WHERE page=? AND ref=?", \
-		  from, to).to_i > 0
+		@table.insert(:page => from, :ref => to) unless \
+		  @table.filter({:page => from, :ref => to}.sql_and).count > 0
 	end
 	def self.internal?(href)
 		!(href.include? "/" or href.include? "?" or href =~ /^mailto:/ or href.include? "@")
@@ -105,13 +44,13 @@ class Links
 	def self.niceify(href)
 	end
 	def to(ref)
-		@db.execute("SELECT page FROM links WHERE ref=?", to) do |row|
-			yield row[0]
+		@table.filter(:ref => ref).each do |row|
+			yield row[:page]
 		end
 	end
 	def from(page)
-		@db.execute("SELECT ref FROM links WHERE page=?", page) do |row|
-			yield row[0]
+		@table.filter(:page => page).each do |row|
+			yield row[:ref]
 		end
 	end
 end
@@ -165,7 +104,7 @@ module SuperString
 				nxt = "</pre>"
 				next
 			end
-			line.gsub! /\\./ {|s| "&##{s};"}
+			line.gsub!(/\\./) {|s| "&##{s};"}
 			if line =~ /^(\={2,6})(.*?)\1$/
 				line = "<h#{$1}>#{$2}</h#{$1}>"
 				nxt = ""
@@ -193,7 +132,7 @@ module SuperString
 				end
 			end
 
-			line.gsub!(/{{(.*?) (.*?)}}/, '<img src="\1" alt="\2" title="\2" />')
+			line.gsub!(/\{\{(.*?) (.*?)\}\}/, '<img src="\1" alt="\2" title="\2" />')
 			line.gsub!(/\b_(.*?[^\\])_\b/, '<em>\1</em>')
 			line.gsub!(/(?!\b)\*(.*?[^\\])\*(?!\b)/, '<strong>\1</strong>')
 			line.gsub!(/``(.*?)''/, '&ldquo;\1&rdquo;')
