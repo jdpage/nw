@@ -1,6 +1,6 @@
-*nw* stands for nano wiki, but I'm beginning to move it towards standing for 'nano web'. The current version is a few hundred lines of Tcl code long, and powers my wiki. The next version will be who knows how many lines of Ruby long, and will replace the Tcl version.
+*nw* stands for nano wiki. The current version is a few hundred lines of Tcl code long, and powers my wiki. The next version will be who knows how many lines of Ruby long, and will replace the Tcl version.
 
-The goal is to be small, fast, lightweight, reasonably feature-complete wiki/web framework. It will be easy to hack on. It will also feed your dog and make you tea when you're sad. I hope. At the moment, it's very function-over-form, with no real themeing support short of editing the code.
+The goal is to be a small, fast, lightweight, reasonably feature-complete wiki. It will be easy to hack on. It will also feed your dog and make you tea when you're sad. I hope. At the moment, it's very function-over-form, with no real themeing support short of editing the code.
 
 Features:
 
