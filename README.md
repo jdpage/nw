@@ -1,4 +1,4 @@
-*nw* stands for nano wiki. The current version is a few hundred lines of Tcl code long, and powers my wiki. The next version will be who knows how many lines of Ruby long, and will replace the Tcl version.
+*nw* stands for nano wiki. The current version is a few hundred lines of Tcl code long, and powers my wiki. I recently scrapped plans to rewrite in ruby, and instead will focus on improving the Tcl version.
 
 The goal is to be a small, fast, lightweight, reasonably feature-complete wiki. It will be easy to hack on. It will also feed your dog and make you tea when you're sad. I hope. At the moment, it's very function-over-form, with no real themeing support short of editing the code.
 
@@ -11,7 +11,7 @@ Features:
 
 Issues:
 
-* A complete copy of each page is stored with each revision. I'll move to diffs at some point.
+* A complete copy of each page is stored with each revision. I'll move to diffs at some point. (planned in next version)
 * No admin interface.
 * Rather ugly and/or boring.
 * There may be bugs in the markup parser. I think I got them all, though.
