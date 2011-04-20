@@ -1,0 +1,209 @@
+package provide app-nw-store 1.0
+
+package require sha1
+package require struct
+package require app-nw-common
+
+load libtclsqlite3.so
+
+namespace eval store {
+	sqlite3 db wiki.db
+	
+	# adds the relevant tables to the db
+	proc init {root password} {
+		set passhash [::sha1::sha1 $password]
+		
+		db eval {
+			CREATE TABLE users (
+				userid INTEGER PRIMARY KEY,
+				name TEXT UNIQUE,
+				password TEXT, -- this is a sha1 passhash
+				level INTEGER -- access level
+			);
+			
+			CREATE TABLE pages (
+				pageid INTEGER PRIMARY KEY,
+				title TEXT UNIQUE,
+				author INTEGER,
+				content TEXT,
+				edited INTEGER,
+				next INTEGER,
+				level INTEGER,
+				FOREIGN KEY(author) REFERENCES users(userid)
+			);
+			
+			CREATE TABLE links (
+				page INTEGER,
+				ref INTEGER,
+				FOREIGN KEY(page) REFERENCES articles(pageid),
+				FOREIGN KEY(ref) REFERENCES articles(pageid)
+			);
+			
+			INSERT INTO users VALUES(NULL, $root, $passhash, 0);
+		}
+	}
+}
+
+namespace eval user {
+	proc new {name password level} {
+		set passhash [::sha1::sha1 $password]
+		store::db eval {INSERT INTO users VALUES(NULL, $name, $passhash, $level)}
+		get $name
+	}
+	proc get {name} {
+		return user[store::db eval {SELECT userid FROM users WHERE name=$name}]
+	}
+	proc id {user} {string range $user 4 end}
+	proc name {user} {
+		set uid [id $user]
+		store::db eval {SELECT name FROM users WHERE userid=$uid}
+	}
+	proc level {{value -1}} {
+		set uid [id $user]
+		if {$value < 0} {
+			store::db eval {SELECT level FROM users WHERE userid=$uid}
+		} else {
+			store::db eval {UPDATE users SET level=$value WHERE userid=$myid}
+		}
+	}
+	method setpassword {password} {
+		set passhash [::sha1::sha1 $password]
+		store::db eval {UPDATE users SET password=$passhash WHERE userid=$myid}
+	}
+	method authenticate {password} {
+		set passhash [::sha1::sha1 $password]
+		llength [store::db eval {SELECT userid FROM users WHERE userid=$myid AND password=$passhash}]
+	}
+	method delete {} {
+		store::db eval {DELETE FROM users WHERE userid=$myid}
+		$self destroy
+	}
+	method id {} { set myid }
+}
+
+snit::type page {
+	variable myid
+	
+	constructor {id} { set myid $id }
+	
+	method title {} {store::db eval {SELECT title FROM pages WHERE pageid=$myid}}
+	method body {} {
+		set nextid $myid
+		set patchqueue {}
+		set out ""
+		while {1} {
+			set q [store::db eval {SELECT next, content FROM pages WHERE pageid=$nextid}]
+			set nextid [lindex $q 0]
+			if {$nextid eq ""} {
+				set out [lindex $q 1]
+				break
+			}
+			lappend patchqueue [lindex $q 1] 0
+		}
+		foreach patch [lreverse $patchqueue] {
+			set out [$type patch $out $patch]
+		}
+		return $out
+	}
+	method author {} {
+		user %AUTO% [store::db eval {SELECT author FROM pages WHERE pageid=$myid}]
+	}
+	method id {} {set myid}
+	method timestamp {} {store::db eval {SELECT edited FROM pages WHERE pageid=$myid}}
+	method wlevel {} {store::db eval {SELECT level FROM pages WHERE pageid=$myid}}
+	method revise {author content level} {
+		if {[$author level] > [$self level]} {
+			return [list 1]
+		} else {
+			set patch [$self diff $content]
+			set a [$author id]
+			set t [$self title]
+			set n [timestamp now]
+			store::db eval {
+				UPDATE pages SET content=$patch WHERE pageid=$myid;
+				INSERT INTO pages VALUES(NULL, $t, $a, $content, $n, NULL, $level);
+			}
+			set next [lindex [store::db eval {SELECT pageid FROM pages WHERE title=$t ORDER BY edited DESC}] 0]
+			store::db eval {UPDATE pages SET next=$next WHERE pageid=$myid}
+			$type %AUTO% $next
+		}
+	}
+	method diff {other} {
+		set new [split $mybody \n]
+		set old [split [$other body] \n]
+		
+		set lcs [::struct::list longestCommonSubsequence $old $new]
+		
+		set alines [list]
+		set dlines [list]
+		
+		for {set oldidx 0; set lcsidx 0} {$oldidx < [llength $old]} {incr oldidx} {
+			if {$oldidx != [lindex [lindex $lcs 0] $lcsidx]} {
+				lappend dlines $oldidx
+			} else {
+				incr lcsidx
+			}
+		}
+		
+		for {set newidx 0; set lcsidx 0} {$newidx < [llength $new]} {incr newidx} {
+			if {$newidx != [lindex [lindex $lcs 1] $lcsidx]} {
+				lappend alines $newidx
+			} else {
+				incr lcsidx
+			}
+		}
+		
+		set out "d $dlines\n"
+		foreach n $alines {
+			append out "$n\t[lindex $new $n]\n"
+		}
+		return $out
+	}
+
+	method {link clear} {} {store::db eval {DELETE FROM links WHERE page=$myid}}
+	method {link add} {to} {
+		set t [$to id]
+		if {[llength [store::db eval {SELECT page FROM links WHERE page=$myid AND ref=$t}]] == 0} {
+			store::db eval {INSERT INTO links VALUES($myid, $t)}
+		}
+	}
+	method {link references} {} {
+		store::db eval {SELECT page FROM links WHERE ref=$myid}
+	}
+	
+	typemethod {link isinternal} {href} {
+		expr {![regexp {.*(/|\?).*} $href] && [string index $href 0] ne "_" && \
+			![regexp {mailto:.*} $href] && ![regexp {.*@.+} $href]}
+	}
+	typemethod patch {old patch} {
+		set old [split $old \n]
+		set p [split $patch \n]
+		foreach line $p {
+			if {$line eq ""} {
+				continue
+			} elseif {[string index $line 0] eq "d"} {
+				set dlines [lrange [split $line] 1 end]
+				foreach n [lreverse $dlines] {
+					set old [lreplace $old $n $n]
+				}
+			} else {
+				set n [lindex [split $line \t] 0]
+				set t [join [lrange [split $line \t] 1 end] \t]
+				set old [linsert $old $n $t]
+			}
+		}
+		
+		join $old \n
+	}
+	typemethod fetch {title {asof now}} {
+		if {$asof eq "now"} { set asof [timestamp now] }
+		set rows [store::db eval {SELECT pageid FROM pages WHERE title=$title AND edited<=$asof ORDER BY edited DESC}]
+		$type [lindex $rows 0]
+	}
+	typemethod new {title author content level} {
+		set a [$author id]
+		set n [timestamp now]
+		store::db eval {INSERT INTO pages VALUES(NULL, $title, $a, $content, $n, NULL, $level)}
+		$type %AUTO% [store::db eval {SELECT pageid FROM pages WHERE title=$title}]
+	}
+}
